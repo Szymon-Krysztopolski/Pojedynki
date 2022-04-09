@@ -27,7 +27,7 @@ int main(int argc, char **argv)
 
     srand(tid);
 
-    int mode = (rand() % 3) % 2; // 0 -> Sekundant, 1 -> Weteran
+    int mode = i % 2; // 0 -> Weteran, 1 -> Sekundant
     int SZ = size;               // liczba lozek = liczbie procesów (pozniej zmienic)
     int lamport_timer = 0;
     int vector_timer[size], vector_modes[size];
@@ -46,7 +46,7 @@ int main(int argc, char **argv)
         MPI_Recv(vector_modes + i, 1, MPI_INT, i, MODE_MESS, MPI_COMM_WORLD, &status);
     }
 
-    int ready=1; //(mode==1) ready4fight || ready4help (mode==0)
+    int ready=1; //(mode==0) ready4fight || ready4help (mode==1)
     int yes=1;
     int no=0;
 

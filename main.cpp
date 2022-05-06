@@ -3,33 +3,6 @@
 #include "Second.h"
 #include "Hospital.h"
 
-//static variables... todo: maybe shove them somewhere else for better clarity
-unsigned    Second::W, Second::S;
-
-std::unique_ptr<int[]>   Second::seconding_ones;
-
-bool        Second::b_busy, Second::b_reserved, Second::b_waiting_sec;
-
-int         Second::t_id;
-
-unsigned    Second::lamport_clock;
-
-std::unique_ptr<std::thread> Second::answer_vet_th, Second::answer_sec_th, Second::sec_readiness_th, Second::confirm_th;
-std::mutex Second::m_busy, Second::m_waiting_sec, Second::m_log;
-
-unsigned Veteran::W, Veteran::S, Veteran::SZ;
-std::unique_ptr<int[]>      Veteran::fighting_ones,
-Veteran::seconding_ones;
-
-bool        Veteran::b_busy, Veteran::b_waiting_vet, Veteran::b_waiting_sec, Veteran::b_wounded;
-
-int         Veteran::t_id;
-
-unsigned    Veteran::lamport_clock;
-
-std::unique_ptr<std::thread> Veteran::challenge_th, Veteran::answer_th, Veteran::result_th, Veteran::vet_readiness_th, Veteran::sec_readiness_th, Veteran::free_bed_th;
-std::mutex Veteran::m_challenge, Veteran::m_busy, Veteran::m_waiting_free_sec, Veteran::m_waiting_sec, Veteran::m_wounded, Veteran::m_log;
-
 int main(int argc, char **argv)
 {
     int size, t_id;
@@ -56,12 +29,13 @@ int main(int argc, char **argv)
         return 0;
     }
 
-
     if (t_id < W)
     {
+        Hospital::init(SZ);
         Veteran::init(t_id, W, S, SZ);
         Veteran::start();
         Veteran::join();
+        Hospital::clean();
     }
     else if (t_id < W + S)
     {

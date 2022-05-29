@@ -4,13 +4,16 @@
 class Second
 {
 public:
-    static void init(int t_id, unsigned W, unsigned S)
+    static void init(int tID, unsigned W, unsigned S)
     {
         Second::tID = tID;
         Second::W = W;
         Second::S = S;
-        Second::secondingOnes = std::unique_ptr<int[]>(new int[S]);
-        memset(secondingOnes.get(), -1, S);
+        Second::secondingOnes       = std::unique_ptr<int[]>(new int[S]);
+        Second::secondingOnesClock  = std::unique_ptr<int[]>(new int[S]);
+        memset(secondingOnes.get(),     -1, S * sizeof(int));
+        memset(secondingOnesClock.get(), 0, S * sizeof(int));
+        newStateNotification("Initialized");
     }
 
     //run all threads
@@ -20,7 +23,8 @@ public:
         answerVeteran_th    = std::make_unique<std::thread>(&Second::invitedByVeteran);
         readiness_second_th = std::make_unique<std::thread>(&Second::readiness_second);
         confirm_th          = std::make_unique<std::thread>(&Second::confirm);
-        startWaiting_th     = std::make_unique<std::thread>(&Second::confirm);
+        startWaiting_th     = std::make_unique<std::thread>(&Second::startWaiting);
+        MPI_Barrier(MPI_COMM_WORLD);
     }
 
     //join all threads
@@ -42,15 +46,12 @@ public:
 private:
     static void newStateNotification(std::string state)
     {
-        //todo: it takes quite some time to save logs and its blocking the threads, we should invert some kind of buffering or a different method of logging (saving to a file?)
+        //todo: it takes quite some time to save logs (and flush them using std::endl) and its blocking the threads, we should invert some kind of buffering or a different method of logging (saving to a file?)
         std::lock_guard<std::mutex> lock(log_m);
-        std::cout << "--------------------------" << std::endl;
-        std::cout << "[ID = " << tID << "; LC = " << lamportClock << "] " << state << std::endl;
-
-        std::cout << "Seconds status: ";
+        std::string message = "--------------------------\n[SEC][ID = " + std::to_string(tID) + "; LC = " + std::to_string(lamportClock) + "] " + state + "\nSeconds status: ";
         for (unsigned i = 0u; i != S; ++i)
-            std::cout << (secondingOnes[i] ? 'X' : 'O') << ' ';
-        std::cout << std::endl;
+            message += ((secondingOnes[i] == -1) ? "O " : "X ");
+        std::cout << message << std::endl;
     }
 
     //first thread
@@ -63,7 +64,7 @@ private:
     static void readiness_second();
     static void sendSecondReadiness_toVeterans(int who, int with_who = -1);
     static void sendSecondReadiness_toAll(int who, int with_who = -1);
-    static bool findFreeSecond(unsigned& random_free);
+    static bool findFreeSecond(unsigned& random_free, unsigned ID = tID);
 
     //fourth thread
     static void startWaiting();
@@ -71,17 +72,31 @@ private:
     //fifth thread
     static void confirm();
 
-    static unsigned W, S;
+    static void setBusy(int who)
+    {
+        bBusy = true;
+        secondingOnes[tID - W] = who;
+    };
+
+    static void unsetBusy()
+    {
+        bBusy = false;
+        bReserved = false;
+        secondingOnes[tID - W] = -1;
+    };
+
+    static unsigned                     W, S;
 
     //contains ids of the processes that other processes currently interact with
-    static std::unique_ptr<int[]>   secondingOnes;
+    static std::unique_ptr<int[]>       secondingOnes,      secondingOnesClock;
 
-    static bool        bBusy, bReserved, bWaiting_second;
+    static bool                         bBusy,              bReserved,          bWaiting_second;
 
-    static int         tID, reserved;
+    static int                          tID,                reserved;
 
-    static unsigned    lamportClock;
+    static unsigned                     lamportClock;
 
-    static std::unique_ptr<std::thread> answerSecond_th, answerVeteran_th, readiness_second_th, confirm_th, startWaiting_th;
-    static std::mutex busy_m, waitingSecond_m, log_m;
+    static std::unique_ptr<std::thread> answerSecond_th,    answerVeteran_th,   readiness_second_th,        confirm_th,         startWaiting_th;
+    static std::mutex                   busy_m,             waitingSecond_m,    log_m;
+    static std::condition_variable      waitingSecond_cv;
 };

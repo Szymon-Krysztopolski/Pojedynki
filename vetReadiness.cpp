@@ -12,23 +12,28 @@ bool Veteran::findFreeSecond(unsigned& random_free)
 
 void Veteran::sendVeteranReadiness_toVeterans(int who, int with_who)
 {
-    sendReadiness(tID, fightingOnes.get(), Message::vetReady, W, who, with_who);
+    sendReadiness(tID, fightingOnes.get(), fightingOnesClock.get(),   Message::vetReady, W, who, with_who);
+    if (with_who != -1)
+        sendReadiness(tID, fightingOnes.get(), fightingOnesClock.get(), Message::vetReady, W, with_who, who - W);
 }
 
 void Veteran::sendSecondReadiness_toAll(int who, int with_who)
 {
-    sendReadiness(tID, secondingOnes.get(), Message::secReady, W + S, who, with_who);
+    sendReadiness(tID, secondingOnes.get(), secondingOnesClock.get(), Message::secReady, W + S, who, with_who, W);
 }
 
 void Veteran::readiness_veterans()
 {
-    readiness(tID, fightingOnes.get(), Message::vetReady, &Veteran::newStateNotification,
+    newStateNotification("Veterans readiness thread started");
+
+    readiness(tID, fightingOnes.get(), fightingOnesClock.get(), Message::vetReady, W, &Veteran::newStateNotification,
         [] 
         {
-            if (fightingOnes[tID] == -1)
+            std::lock_guard<std::mutex> lock(busy_m);
+            if (bBusy && fightingOnes[tID] == -1)
             {
-                const std::lock_guard<std::mutex> lock(busy_m);
-                bBusy = false;
+                newStateNotification("I am free");
+                unsetBusy();
             }
             if (bWaiting_veteran)
             {
@@ -37,7 +42,7 @@ void Veteran::readiness_veterans()
                 {
                     newStateNotification("A free veteran has shown up");
                     bWaiting_veteran = false;
-                    challenge_m.unlock();
+                    challenge_cv.notify_one();
                 }
             }
         });    
@@ -45,10 +50,12 @@ void Veteran::readiness_veterans()
 
 void Veteran::readiness_seconds()
 {
-    readiness(tID, secondingOnes.get(), Message::secReady, &Veteran::newStateNotification,
+    newStateNotification("Seconds readiness thread started");
+
+    readiness(tID, secondingOnes.get(), secondingOnesClock.get(), Message::secReady, W + S, &Veteran::newStateNotification,
         []
         {
-            const std::lock_guard<std::mutex> lock(waiting_second_m);
+            std::lock_guard<std::mutex> lck(waiting_second_m);
             if (bWaiting_second)
             {
                 unsigned notUsed;
@@ -56,8 +63,8 @@ void Veteran::readiness_seconds()
                 {
                     newStateNotification("A free second has shown up");
                     bWaiting_second = false;
-                    waiting_untilFreeSecond_m.unlock();
+                    second_cv.notify_one();
                 }
             }
-        });
+        }, W);
 }

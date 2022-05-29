@@ -24,15 +24,17 @@ void Veteran::endDuel_result(bool won)
 		if (!criticalSection())
 			return;
 	{
-		const std::lock_guard<std::mutex> lock(busy_m);
-		bBusy = false;
+		std::lock_guard<std::mutex> lock(busy_m);
+		unsetBusy();
 	}
 	sendVeteranReadiness_toVeterans(tID);
-	challenge_m.unlock();
+	challenge_cv.notify_one();
 }
 
 void Veteran::result()
 {
+	newStateNotification("Result thread started");
+
 	MPI_Status status;
 	char data;
 	while (true)
@@ -42,12 +44,13 @@ void Veteran::result()
 		//cancelled duel
 		if (data == 2)
 		{
-			newStateNotification("Challenging " + std::to_string(data) + " and waiting for their answer");
+			//MPI_Abort(MPI_COMM_WORLD, 15);
+			newStateNotification("A duel with " + std::to_string(data) + " has been cancelled");
 			{
-				const std::lock_guard<std::mutex> lock(busy_m);
-				bBusy = false;
+				std::lock_guard<std::mutex> lock(busy_m);
+				unsetBusy();
 			}
-			challenge_m.unlock();
+			challenge_cv.notify_one();
 		}
 		else endDuel_result(data);
 	}
@@ -55,13 +58,15 @@ void Veteran::result()
 
 void Veteran::freeBed()
 {
+	newStateNotification("FreeBed thread started");
+
 	MPI_Status status;
 	while (true)
 	{
 		MPI_Recv(nullptr, 0, MPI_DATATYPE_NULL, MPI_ANY_SOURCE, Message::vetBedFreed, MPI_COMM_WORLD, &status);
 		newStateNotification("A bed has been freed");
 		{
-			const std::lock_guard<std::mutex> lock(wounded_m);
+			std::lock_guard<std::mutex> lock(wounded_m);
 			if (bWounded)
 				endDuel_result(false);
 		}

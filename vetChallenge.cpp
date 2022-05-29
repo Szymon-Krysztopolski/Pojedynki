@@ -1,29 +1,26 @@
 ﻿#include "Veteran.h"
-#define NO_SECONDS_DEBUG
 
 void Veteran::challenge()
 {
+    newStateNotification("Challenge thread started");
     while (true)
     {
-        challenge_m.lock();
+        {
+            std::unique_lock<std::mutex> lck(busy_m);
+            challenge_cv.wait(lck, [] { return !bBusy && !bWaiting_veteran; });
+        }
         unsigned who;
         bool answer;
         if (!ask_challenge(who, answer))
             continue;
 
         if (answer == false)
-        {
-            challenge_m.unlock();
-            continue;
-        }
-
-        if (!(who))
             continue;
 
-        int data[2] = { tID, static_cast<int>(who) };
-        sendVeteranReadiness_toVeterans(tID, who);
+        if (!isCancelled_challenge(who))
+            continue;
 
-        newStateNotification("Preparing to a duel, telling everybody I (" + std::to_string(tID) + ") and " + std::to_string(who) + " are busy");
+        //newStateNotification("Preparing to a duel, telling everybody I (" + std::to_string(tID) + ") and " + std::to_string(who) + " are busy");
 
         #ifndef NO_SECONDS_DEBUG
         unsigned second[2];
@@ -31,14 +28,18 @@ void Veteran::challenge()
             continue;
         #endif
 
-        newStateNotification("A duel between " + std::to_string(tID) + " and " + std::to_string(who) + " has started!");
+        newStateNotification("A duel between " + std::to_string(tID) + " and " + std::to_string(who) 
+#ifndef NO_SECONDS_DEBUG 
+            + " with Seconds " + std::to_string(second[0] + W) + " and " + std::to_string(second[1] + W)
+#endif
+            + " has started!");
 
         if (!duel_challenge(who))
             continue;
 
         #ifndef NO_SECONDS_DEBUG
-        sendSecondReadiness_all(second[0]);
-        sendSecondReadiness_all(second[1]);
+        sendSecondReadiness_toAll(second[0]);
+        sendSecondReadiness_toAll(second[1]);
         #endif
     }
 }
@@ -47,9 +48,6 @@ bool Veteran::ask_challenge(unsigned &who, bool &answer)
 {
     newStateNotification("Trying to challenge someone");
     {
-        const std::lock_guard<std::mutex> guard(busy_m);
-        //m_chalenge will be freed by results thread
-        
         if (!findFreeVeteran(who))
         {
             //m_chalenge will be freed by veteran readiness thread
@@ -60,27 +58,32 @@ bool Veteran::ask_challenge(unsigned &who, bool &answer)
         MPI_Send(nullptr, 0, MPI_DATATYPE_NULL, who, Message::vetChallenge_ask, MPI_COMM_WORLD);
         newStateNotification("Challenging " + std::to_string(who) + " and waiting for their answer");
     }
-
     char ret;
     MPI_Status status;
+    int clock = fightingOnesClock[who];
     MPI_Recv(&ret, 1, MPI_CHAR, who, Message::vetChallenge_answer, MPI_COMM_WORLD, &status);
     answer = static_cast<bool>(ret);
+    {
+        std::lock_guard<std::mutex> lock(busy_m);
+        if (!answer && clock == fightingOnesClock[who])
+            fightingOnes[who] = tID;
+    }
     newStateNotification(std::string("Got a ") + (answer ? "positive" : "negative") + " answer from " + std::to_string(who));
-    return true;
+    return answer;
 }
 
 bool Veteran::isCancelled_challenge(unsigned who)
 {
-    const std::lock_guard<std::mutex> guard(busy_m);
-    //m_chalenge will be freed by results thread
+    std::lock_guard<std::mutex> guard(busy_m);
     if (bBusy)
     {
-        int data[] = { tID, true };
-        MPI_Send(nullptr, 0, MPI_DATATYPE_NULL, who, Message::vetResults, MPI_COMM_WORLD);
+        char data = 2;
+        MPI_Send(&data, 1, MPI_CHAR, who, Message::vetResults, MPI_COMM_WORLD);
         newStateNotification("I need to cancel my duel with " + std::to_string(who));
         return false;
     }
-    bBusy = true;
+    setBusy(who);
+    sendVeteranReadiness_toVeterans(tID, who);
     return true;
 }
 
@@ -88,46 +91,47 @@ bool Veteran::findSeconds_challenge(unsigned second[2])
 {
     MPI_Status status;
     int answer[2];
+    newStateNotification("Trying to find the Seconds");
+
     while (true)
     {
-        waiting_untilFreeSecond_m.lock();
-
-        newStateNotification("Trying to find the Seconds");
-        
-        failedAnswer:
         {
-            const std::lock_guard<std::mutex> guard(waiting_second_m);
-            //todo: lepsze PRNG
-            if (findFreeSecond(second[0]))
-            {
-                //m_chalenge will be freed by veteran readiness thread
-                newStateNotification("Awaiting free Seconds");
-                bWaiting_second = true;
-                continue;
-            }
-            MPI_Send(nullptr, 0, MPI_DATATYPE_NULL, second[0], Message::vetSecond_ask, MPI_COMM_WORLD);
-            newStateNotification("Asking Second " + std::to_string(second[0]) + " and waiting for their answer");
+            std::unique_lock<std::mutex> lck(waiting_second_m);
+            second_cv.wait(lck, [] { return !bWaiting_second; });
         }
 
-        MPI_Recv(&answer, 2, MPI_INT, second[0], Message::vetSecond_answer, MPI_COMM_WORLD, &status);
+        if (!findFreeSecond(second[0]))
+        {
+            newStateNotification("Awaiting free Seconds");
+            bWaiting_second = true;
+            continue;
+        }
+        MPI_Send(nullptr, 0, MPI_DATATYPE_NULL, W + second[0], Message::vetSecond_ask, MPI_COMM_WORLD);
+        newStateNotification("Asking second " + std::to_string(W + second[0]) + " and waiting for their answer");
+
+        MPI_Recv(answer, 2, MPI_INT, MPI_ANY_SOURCE, Message::vetSecond_answer, MPI_COMM_WORLD, &status);
         if (answer[0] == false)
-            goto failedAnswer;  //actually a good use of goto
-        
-        second[1] = answer[1];
+        {
+            std::unique_lock<std::mutex> lck(busy_m);
+            secondingOnes[second[0]] = W + 1;
+            continue;
+        }
+
+        second[1] = answer[1] - W;
+        return true;
     }
-    waiting_untilFreeSecond_m.unlock();
     return true;
 }
 
 bool Veteran::duel_challenge(int opponent)
 {
     //todo: platform independent sleep
-    _sleep(200 + rand() % 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30000 + rand() % 300));
     char result = rand() % 2;
-    MPI_Send(&result, 1, MPI_CHAR, 0, Message::vetResults, MPI_COMM_WORLD);
+    MPI_Send(&result, 1, MPI_CHAR, tID, Message::vetResults, MPI_COMM_WORLD);
     result ^= 1;
     MPI_Send(&result, 1, MPI_CHAR, opponent, Message::vetResults, MPI_COMM_WORLD);
-    newStateNotification("A duel between " + std::to_string(tID) + " and " + std::to_string(opponent) + " has ended");
+    newStateNotification("A duel between " + std::to_string(tID) + " and " + std::to_string(opponent) + " was won by " + (result ? std::to_string(opponent) : std::to_string(tID)));
 
     return true;
 }

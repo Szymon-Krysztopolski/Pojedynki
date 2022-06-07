@@ -1,98 +1,90 @@
 #include "Second.h"
 
-bool Second::findFreeSecond(unsigned& random_free)
+void Second::readyForNothing()
 {
-    return findFree(secondingOnes.get(), S, random_free);
+    newStateNotification("Readiness thread started");
+    MPI_Status status;
+    while (true)
+    {
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, readiness_Comm, &status);
+        switch (status.MPI_TAG)
+        {
+            case secReady:
+            {
+                std::lock_guard<std::mutex> guard(secbusy_m);
+                readiness(tID, secondingOnes.get(), secondingOnesClock.get(), Message::secReady, W + S, &Second::newStateNotification, W);
+                if ((bReserved || bBusy) && secondingOnes[tID - W] == -1)
+                {
+                    newStateNotification("I am free");
+                    unsetBusy();
+                }
+            }
+                waitingSecond_cv.notify_one();
+        break;
+        default:
+            newStateNotification("Readiness thread: unknown tag");
+            break;
+        }
+    }
+}
+
+void Second::waiting()
+{
+    newStateNotification("Waiting thread started");
+    MPI_Status status;
+    while (true)
+    {
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, waiting_Comm, &status);
+        switch (status.MPI_TAG)
+        {
+            case secNoFreeSecond:
+                waitingSecond();
+        break;
+            default:
+                newStateNotification("Waiting thread: unknown tag");
+        break;
+        }
+    }
+}
+
+
+bool Second::findFreeSecond(unsigned *random_free, unsigned ID)
+{
+    return findFree(secondingOnes.get(), S, random_free, false, ID - W);
 }
 
 void Second::sendSecondReadiness_toVeterans(int who, int with_who)
 {
-    sendReadiness(tID, secondingOnes.get(), Message::vetReady, W, who, with_who);
+    sendReadiness(tID, secondingOnes.get(), secondingOnesClock.get(), Message::secReady, W, who - W, with_who, W);
 }
 
 void Second::sendSecondReadiness_toAll(int who, int with_who)
 {
-    sendReadiness(tID, secondingOnes.get(), Message::secReady, W + S, who, with_who);
+    sendReadiness(tID, secondingOnes.get(), secondingOnesClock.get(),  Message::secReady, W + S, who - W, with_who, W);
 }
 
-void Second::confirm()
+void Second::waitingSecond()
 {
     MPI_Status status;
-    int id[2];
-    while (true)
-    {
-        MPI_Recv(id, 2, MPI_INT, MPI_ANY_SOURCE, Message::secConfirm, MPI_COMM_WORLD, &status);
-        newStateNotification("Recieved a confirmation " + std::to_string(id[0]) + " can take part in a duel as a second Second");
-        {
-            const std::lock_guard<std::mutex> lock(busy_m);
-            if (bBusy)
-            {
-                newStateNotification("Unfortunately for them I am no longer interested in participation in the old duel, because I have a new one. Sending to everyone that the confirming second is actually free");
-                sendSecondReadiness_toAll(id[0]);
-                continue;
-            }
-            else
-                bBusy = true;
-            int data[2] = { true, id[0] };
-            if (bReserved)
-            {
-                //todo: lepsze PRNG
-                bool bWhose = rand() % 2;
-                data[0] = bWhose;
-                MPI_Send(data, 2, MPI_INT, reserved, Message::vetSecond_answer, MPI_COMM_WORLD);
-                data[0] = !bWhose;
-                MPI_Send(data, 2, MPI_INT, id[0], Message::vetSecond_answer, MPI_COMM_WORLD);
-                newStateNotification("Accepting duel of " + (bWhose ? std::to_string(tID) : std::to_string(id[0])));
-            }
-            else
-            {
-                MPI_Send(data, 2, MPI_INT, reserved, Message::vetSecond_answer, MPI_COMM_WORLD);
-                newStateNotification("Accepting duel of " + std::to_string(tID));
-            }
-        }
-    }
-}
+    recv_secNoFreeSecond(&status);
+    newStateNotification("There are no longer any free Seconds. Waiting for one to show up");
 
-void Second::readiness_second()
-{
-    readiness(tID, secondingOnes.get(), Message::secReady, &Second::newStateNotification,
-        []
-        {
-            if (secondingOnes[tID] == -1)
-            {
-                const std::lock_guard<std::mutex> lock(busy_m);
-                bBusy = false;
-                bReserved = false;
-                newStateNotification("I am no longer busy");
-            }
-            const std::lock_guard<std::mutex> lock(waitingSecond_m);
-            if (bWaiting_second)
-            {
-                unsigned freeOne;
-                if (findFreeSecond(freeOne))
-                {
-                    MPI_Send(&tID, 1, MPI_INT, freeOne, Message::vetSecond_ask, MPI_COMM_WORLD);
-                    newStateNotification("A free second has shown up");
-                    bWaiting_second = false;
-                }
-            }
+    //Waiting for a free Second to show up
+    unsigned freeOne;
+    std::unique_lock<std::mutex> lck(secbusy_m);
+    waitingSecond_cv.wait(lck, [&freeOne]
+        { 
+            return findFreeSecond(&freeOne); 
         });
-}
-
-void Second::startWaiting()
-{
-    MPI_Status status;
-    while (true)
+    //Maybe somebody asked us to participate in a duel and we no longer need to search for a second Second
+    if (bBusy)
     {
-        MPI_Recv(nullptr, 0, MPI_DATATYPE_NULL, MPI_ANY_SOURCE, Message::secNoFreeSecond, MPI_COMM_WORLD, &status);
-        newStateNotification("There are no longer any free seconds. Waiting for one to show up");
-        const std::lock_guard<std::mutex> lock(waitingSecond_m);
-        unsigned freeOne;
-        if (findFreeSecond(freeOne))
-        {
-            MPI_Send(&freeOne, 1, MPI_INT, freeOne, Message::secSecond_ask, MPI_COMM_WORLD);
-            newStateNotification("A free second is available. Asking them to join a duel");
-        }
-        else bWaiting_second = true;
+        newStateNotification("I found a duel while waiting for a free Second");
+        return;
     }
+    newStateNotification("A free Second is available: " + std::to_string(W + freeOne) + ". Asking them to join a duel hosted by " + std::to_string(reserved));
+    //int data[2] = { tID, host };
+    int data[2] = { tID, reserved };
+    send_secSecond_ask(W + freeOne, data);
+    secondingOnes[freeOne] = tID;
 }

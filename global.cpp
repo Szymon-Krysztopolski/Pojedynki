@@ -1,31 +1,39 @@
 #include "Veteran.h"
 #include "Second.h"
-#include "Hospital.h"
+//Definitions of declared static variables
 
-unsigned    Second::W, Second::S;
+MPI_Comm						local_Comm,					readiness_Comm,						chall_Comm,							critical_Comm,						waiting_Comm;
 
-std::unique_ptr<int[]>   Second::secondingOnes;
+unsigned						Second::W,					Second::S;
 
-bool        Second::bBusy, Second::bReserved, Second::bWaiting_second;
+std::unique_ptr<int[]>			Second::secondingOnes,		Second::secondingOnesClock;
 
-int         Second::tID, Second::reserved;
+bool							Second::bBusy = false,		Second::bReserved = false;
 
-unsigned    Second::lamportClock;
+int								Second::tID,				Second::reserved,					Second::agreed;
 
-std::unique_ptr<std::thread> Second::answerSecond_th, Second::answerVeteran_th, Second::readiness_second_th, Second::confirm_th, Second::startWaiting_th;
-std::mutex Second::busy_m, Second::waitingSecond_m, Second::log_m;
+std::unique_ptr<std::thread>	Second::veteran_th,			Second::answer_th,					Second::readiness_th,				Second::waiting_th;
+std::mutex						Second::secbusy_m,			Second::log_m;
+std::condition_variable			Second::waitingSecond_cv;
 
-unsigned Veteran::W, Veteran::S, Veteran::SZ;
-std::unique_ptr<int[]>      Veteran::fightingOnes,
-Veteran::secondingOnes;
 
-bool        Veteran::bBusy, Veteran::bWaiting_veteran, Veteran::bWaiting_second, Veteran::bWounded;
 
-int         Veteran::tID;
+unsigned						Veteran::W,					Veteran::S,							Veteran::SZ,						Veteran::myLamport = 0;
 
-unsigned    Veteran::lamportClock;
+std::unique_ptr<int[]>			Veteran::fightingOnes,		Veteran::secondingOnes,				Veteran::fightingOnesClock,			Veteran::secondingOnesClock;
 
-std::unique_ptr<std::thread> Veteran::challenge_th, Veteran::answer_th, Veteran::result_th, Veteran::readiness_veterans_th, Veteran::readiness_seconds_th, Veteran::freeBed_th;
-std::mutex Veteran::challenge_m, Veteran::busy_m, Veteran::waiting_untilFreeSecond_m, Veteran::waiting_second_m, Veteran::wounded_m, Veteran::log_m;
 
-std::unique_ptr<int[]> Hospital::beds;
+bool							Veteran::bBusy = false;
+
+int								Veteran::tID;
+
+std::unique_ptr<int[]>			Veteran::lamport,			Veteran::lamportClock,				Veteran::hospitalBeds,				Veteran::hospitalBedsClock,			Veteran::hospitalDoorClock;
+std::unique_ptr<bool[]>			Veteran::hospitalDoor;
+
+
+
+std::unique_ptr<std::thread>	Veteran::challenge_th,		Veteran::answer_th,					Veteran::readiness_th,				Veteran::critical_th;
+std::mutex						Veteran::challenge_m,		Veteran::busy_m,					Veteran::wounded_m,					Veteran::log_m,						Veteran::second_m,					
+								Veteran::lamport_m,			Veteran::door_m;
+std::condition_variable			Veteran::veteran_cv,		Veteran::second_cv,					Veteran::lamport_cv,				Veteran::wounded_cv,				Veteran::door_cv;
+

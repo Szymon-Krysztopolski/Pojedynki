@@ -1,38 +1,39 @@
 #include "Veteran.h"
 #include "Second.h"
-#include "Hospital.h"
+//Definitions of declared static variables
+
+MPI_Comm						local_Comm,					readiness_Comm,						chall_Comm,							critical_Comm,						waiting_Comm;
 
 unsigned						Second::W,					Second::S;
 
 std::unique_ptr<int[]>			Second::secondingOnes,		Second::secondingOnesClock;
 
-bool							Second::bBusy = false,		Second::bReserved = false,			Second::bWaiting_second = false;
+bool							Second::bBusy = false,		Second::bReserved = false;
 
-int								Second::tID,				Second::reserved;
+int								Second::tID,				Second::reserved,					Second::agreed;
 
-unsigned						Second::lamportClock;
-
-std::unique_ptr<std::thread>	Second::answerSecond_th,	Second::answerVeteran_th,			Second::readiness_second_th,		Second::confirm_th,					Second::startWaiting_th;
-std::mutex						Second::busy_m,				Second::waitingSecond_m,			Second::log_m;
+std::unique_ptr<std::thread>	Second::veteran_th,			Second::answer_th,					Second::readiness_th,				Second::waiting_th;
+std::mutex						Second::secbusy_m,			Second::log_m;
 std::condition_variable			Second::waitingSecond_cv;
 
 
 
-unsigned						Veteran::W,					Veteran::S,							Veteran::SZ;
+unsigned						Veteran::W,					Veteran::S,							Veteran::SZ,						Veteran::myLamport = 0;
 
 std::unique_ptr<int[]>			Veteran::fightingOnes,		Veteran::secondingOnes,				Veteran::fightingOnesClock,			Veteran::secondingOnesClock;
 
 
-bool							Veteran::bBusy = false,		Veteran::bWaiting_veteran = false,	Veteran::bWaiting_second = false,	Veteran::bWounded = false;
+bool							Veteran::bBusy = false;
 
 int								Veteran::tID;
 
-unsigned						Veteran::lamportClock;
-
-std::unique_ptr<std::thread>	Veteran::challenge_th,		Veteran::answer_th,					Veteran::result_th,					Veteran::readiness_veterans_th,		Veteran::readiness_seconds_th,		Veteran::freeBed_th;
-std::mutex						Veteran::challenge_m,		Veteran::busy_m,					Veteran::waiting_second_m,			Veteran::wounded_m,					Veteran::log_m,						Veteran::fighting_m,	Veteran::second_m;
-std::condition_variable			Veteran::challenge_cv,		Veteran::second_cv;
+std::unique_ptr<int[]>			Veteran::lamport,			Veteran::lamportClock,				Veteran::hospitalBeds,				Veteran::hospitalBedsClock,			Veteran::hospitalDoorClock;
+std::unique_ptr<bool[]>			Veteran::hospitalDoor;
 
 
 
-std::unique_ptr<int[]>			Hospital::beds;
+std::unique_ptr<std::thread>	Veteran::challenge_th,		Veteran::answer_th,					Veteran::readiness_th,				Veteran::critical_th;
+std::mutex						Veteran::challenge_m,		Veteran::busy_m,					Veteran::wounded_m,					Veteran::log_m,						Veteran::second_m,					
+								Veteran::lamport_m,			Veteran::door_m;
+std::condition_variable			Veteran::veteran_cv,		Veteran::second_cv,					Veteran::lamport_cv,				Veteran::wounded_cv,				Veteran::door_cv;
+
